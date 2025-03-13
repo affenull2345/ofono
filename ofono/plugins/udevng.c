@@ -41,6 +41,7 @@
 enum modem_type {
 	MODEM_TYPE_USB,
 	MODEM_TYPE_SERIAL,
+	MODEM_TYPE_EMBEDDED,
 };
 
 struct modem_info {
@@ -49,6 +50,7 @@ struct modem_info {
 	char *driver;
 	char *vendor;
 	char *model;
+	char *name;
 	enum modem_type type;
 	union {
 		GSList *devices;
@@ -1288,6 +1290,47 @@ static gboolean setup_sim7100(struct modem_info *modem)
 	return TRUE;
 }
 
+static void setup_sprd_net(struct modem_info *modem, struct device_info *info)
+{
+	const char *net_prefix = "net";
+	const char *cid;
+	char property[48];
+
+	if (g_str_has_prefix(info->label, net_prefix) == FALSE)
+		return;
+
+	cid = info->label + strlen(net_prefix);
+
+	snprintf(property, sizeof(property), "NetworkInterface%s", cid);
+	ofono_modem_set_string(modem->modem, property, info->devnode);
+}
+
+static gboolean setup_sprd(struct modem_info *modem)
+{
+	const char *at = NULL;
+	GSList *list;
+
+	DBG("%s\n", modem->syspath);
+
+	for (list = modem->devices; list; list = list->next) {
+		struct device_info *info = list->data;
+
+		DBG("%s %s\n", info->devnode, info->label);
+
+		if (g_strcmp0(info->label, "at") == 0)
+			at = info->devnode;
+		else
+			setup_sprd_net(modem, info);
+	}
+
+	if (at == NULL)
+		return FALSE;
+
+	ofono_modem_set_string(modem->modem, "AT", at);
+
+	return TRUE;
+}
+
 static struct {
 	const char *name;
 	gboolean (*setup)(struct modem_info *modem);
@@ -1329,6 +1372,7 @@ static struct {
 	{ "wavecom",	setup_wavecom		},
 	{ "tc65",	setup_tc65		},
 	{ "ehs6",	setup_ehs6		},
+	{ "sprd",	setup_sprd		},
 	{ }
 };
 
@@ -1378,6 +1422,7 @@ static void destroy_modem(gpointer data)
 
 	switch (modem->type) {
 	case MODEM_TYPE_USB:
+	case MODEM_TYPE_EMBEDDED:
 		for (list = modem->devices; list; list = list->next) {
 			struct device_info *info = list->data;
 
@@ -1397,6 +1442,7 @@ static void destroy_modem(gpointer data)
 	g_free(modem->driver);
 	g_free(modem->vendor);
 	g_free(modem->model);
+	g_free(modem->name);
 	g_free(modem);
 }
 
@@ -1408,6 +1454,7 @@ static gboolean check_remove(gpointer key, gpointer value, gpointer user_data)
 
 	switch (modem->type) {
 	case MODEM_TYPE_USB:
+	case MODEM_TYPE_EMBEDDED:
 		for (list = modem->devices; list; list = list->next) {
 			struct device_info *info = list->data;
 
@@ -1540,7 +1587,8 @@ static void add_serial_device(struct udev_device *dev)
 
 static void add_device(const char *syspath, const char *devname,
 			const char *driver, const char *vendor,
-			const char *model, struct udev_device *device)
+			const char *model, enum modem_type modem_type,
+			struct udev_device *device, const char *name)
 {
 	struct udev_device *usb_interface;
 	const char *devpath, *devnode, *interface, *number;
@@ -1560,31 +1608,45 @@ static void add_device(const char *syspath, const char *devname,
 			return;
 	}
 
-	usb_interface = udev_device_get_parent_with_subsystem_devtype(device,
-						"usb", "usb_interface");
-	if (usb_interface == NULL)
-		return;
-
 	modem = g_hash_table_lookup(modem_list, syspath);
 	if (modem == NULL) {
 		modem = g_try_new0(struct modem_info, 1);
 		if (modem == NULL)
 			return;
 
-		modem->type = MODEM_TYPE_USB;
+		modem->type = modem_type;
 		modem->syspath = g_strdup(syspath);
 		modem->devname = g_strdup(devname);
 		modem->driver = g_strdup(driver);
 		modem->vendor = g_strdup(vendor);
 		modem->model = g_strdup(model);
+		modem->name = g_strdup(name);
 
 		modem->sysattr = get_sysattr(driver);
 
 		g_hash_table_replace(modem_list, modem->syspath, modem);
 	}
 
-	interface = udev_device_get_property_value(usb_interface, "INTERFACE");
-	number = udev_device_get_property_value(device, "ID_USB_INTERFACE_NUM");
+	if (modem->type == MODEM_TYPE_USB) {
+		usb_interface = udev_device_get_parent_with_subsystem_devtype(
+							device, "usb",
+							"usb_interface");
+		if (usb_interface == NULL)
+			return;
+
+		interface = udev_device_get_property_value(usb_interface,
+							"INTERFACE");
+		number = udev_device_get_property_value(device,
+						"ID_USB_INTERFACE_NUM");
+		label = udev_device_get_property_value(device, "OFONO_LABEL");
+		if (!label)
+			label = udev_device_get_property_value(usb_interface,
+							"OFONO_LABEL");
+	} else {
+		interface = NULL;
+		number = NULL;
+		label = udev_device_get_property_value(device, "OFONO_LABEL");
+	}
 
 	/* If environment variable is not set, get value from attributes (or parent's ones) */
 	if (number == NULL) {
@@ -1597,11 +1659,6 @@ static void add_device(const char *syspath, const char *devname,
 							"bInterfaceNumber");
 		}
 	}
-
-	label = udev_device_get_property_value(device, "OFONO_LABEL");
-	if (!label)
-		label = udev_device_get_property_value(usb_interface,
-							"OFONO_LABEL");
 
 	subsystem = udev_device_get_subsystem(device);
 
@@ -1793,12 +1850,34 @@ static void check_usb_device(struct udev_device *device)
 			return;
 	}
 
-	add_device(syspath, devname, driver, vendor, model, device);
+	add_device(syspath, devname, driver, vendor, model, MODEM_TYPE_USB,
+			device, NULL);
+}
+
+static gboolean check_sprd_soc_device(struct udev_device *device)
+{
+	char path[32], name[32];
+	const char *slot;
+
+	slot = udev_device_get_property_value(device, "OFONO_SPRD_SLOT");
+	if (!slot)
+		return FALSE;
+
+	snprintf(path, sizeof(path), "/embedded/sprd/%s", slot);
+	snprintf(name, sizeof(name), "soc_%s", slot);
+	DBG("path=%s name=%s", path, name);
+	add_device(path, NULL, "sprd", NULL, NULL, MODEM_TYPE_EMBEDDED, device,
+			name);
+
+	return TRUE;
 }
 
 static void check_device(struct udev_device *device)
 {
 	const char *bus;
+
+	if (check_sprd_soc_device(device) == TRUE)
+		return;
 
 	bus = udev_device_get_property_value(device, "ID_BUS");
 	if (bus == NULL) {
@@ -1829,9 +1908,9 @@ static gboolean create_modem(gpointer key, gpointer value, gpointer user_data)
 	if (modem->devices == NULL)
 		return TRUE;
 
-	DBG("driver=%s", modem->driver);
+	DBG("name=%s driver=%s", modem->name, modem->driver);
 
-	modem->modem = ofono_modem_create(NULL, modem->driver);
+	modem->modem = ofono_modem_create(modem->name, modem->driver);
 	if (modem->modem == NULL)
 		return TRUE;
 
@@ -1870,6 +1949,7 @@ static void enumerate_devices(struct udev *context)
 	udev_enumerate_add_match_subsystem(enumerate, "usbmisc");
 	udev_enumerate_add_match_subsystem(enumerate, "net");
 	udev_enumerate_add_match_subsystem(enumerate, "hsi");
+	udev_enumerate_add_match_subsystem(enumerate, "wwan");
 
 	udev_enumerate_scan_devices(enumerate);
 
@@ -1995,6 +2075,7 @@ static int detect_init(void)
 							"usbmisc", NULL);
 	udev_monitor_filter_add_match_subsystem_devtype(udev_mon, "net", NULL);
 	udev_monitor_filter_add_match_subsystem_devtype(udev_mon, "hsi", NULL);
+	udev_monitor_filter_add_match_subsystem_devtype(udev_mon, "wwan", NULL);
 
 	udev_monitor_filter_update(udev_mon);
 

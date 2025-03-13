@@ -71,6 +71,7 @@ static const char *pnnm_prefix[] = { "+PNNM:", NULL };
 static const char *qpinc_prefix[] = { "+QPINC:", NULL };
 static const char *qtrpin_prefix[] = { "+QTRPIN:", NULL };
 static const char *upincnt_prefix[] = { "+UPINCNT:", NULL };
+static const char *sprd_xx_prefix[] = { "+XX:", NULL };
 static const char *cuad_prefix[] = { "+CUAD:", NULL };
 static const char *ccho_prefix[] = { "+CCHO:", NULL };
 static const char *crla_prefix[] = { "+CRLA:", NULL };
@@ -1150,6 +1151,52 @@ error:
 	CALLBACK_WITH_FAILURE(cb, NULL, cbd->data);
 }
 
+static void sprd_xx_cb(gboolean ok, GAtResult *result, gpointer user_data)
+{
+	struct cb_data *cbd = user_data;
+	ofono_sim_pin_retries_cb_t cb = cbd->cb;
+	GAtResultIter iter;
+	struct ofono_error error;
+	int retries[OFONO_SIM_PASSWORD_INVALID];
+	size_t i;
+	static enum ofono_sim_password_type password_types[] = {
+		OFONO_SIM_PASSWORD_SIM_PIN,
+		OFONO_SIM_PASSWORD_SIM_PIN2,
+		OFONO_SIM_PASSWORD_SIM_PUK,
+		OFONO_SIM_PASSWORD_SIM_PUK2,
+	};
+
+	decode_at_error(&error, g_at_result_final_response(result));
+
+	if (!ok) {
+		cb(&error, NULL, cbd->data);
+		return;
+	}
+
+	for (i = 0; i < OFONO_SIM_PASSWORD_INVALID; i++)
+		retries[i] = -1;
+
+	g_at_result_iter_init(&iter, result);
+
+	for (i = 0; i < ARRAY_SIZE(password_types); i++) {
+		int val;
+
+		if (!g_at_result_iter_next(&iter, "+XX:"))
+			goto error;
+
+		if (!g_at_result_iter_next_number(&iter, &val))
+			goto error;
+
+		retries[password_types[i]] = val;
+	}
+
+	cb(&error, retries, cbd->data);
+	return;
+
+error:
+	CALLBACK_WITH_FAILURE(cb, NULL, cbd->data);
+}
+
 static void at_pin_retries_query(struct ofono_sim *sim,
 					ofono_sim_pin_retries_cb_t cb,
 					void *data)
@@ -1230,6 +1277,12 @@ static void at_pin_retries_query(struct ofono_sim *sim,
 	case OFONO_VENDOR_GEMALTO:
 		if (g_at_chat_send(sd->chat, "AT^SPIC", gemalto_spic_prefix,
 					gemalto_spic_cb, cbd, g_free) > 0)
+			return;
+		break;
+	case OFONO_VENDOR_SPRD:
+		if (g_at_chat_send(sd->chat, "AT+XX=0;+XX=1;+XX=2;+XX=3",
+					sprd_xx_prefix, sprd_xx_cb, cbd,
+					g_free) > 0)
 			return;
 		break;
 	default:
@@ -1355,6 +1408,7 @@ static void at_pin_send_cb(gboolean ok, GAtResult *result,
 	case OFONO_VENDOR_SIMCOM:
 	case OFONO_VENDOR_SIERRA:
 	case OFONO_VENDOR_QUECTEL_M95:
+	case OFONO_VENDOR_SPRD:
 		/*
 		 * On ZTE modems, after pin is entered, SIM state is checked
 		 * by polling CPIN as their modem doesn't provide unsolicited

@@ -172,6 +172,12 @@ AC_ARG_ENABLE(extra-modems,
 					[enable_extra_modems=${enableval}])
 AM_CONDITIONAL(EXTRA_MODEMS, test "${enable_extra_modems}" = "yes")
 
+AC_ARG_ENABLE(sprdmodem,
+		AC_HELP_STRING([--disable-sprdmodem],
+			[disable Unisoc/Spreadtrum modem supports]),
+					[enable_sprdmodem=${enableval}])
+AM_CONDITIONAL(SPRDMODEM, test "${enable_sprdmodem}" != "no")
+
 PKG_CHECK_MODULES(GLIBUTIL, libglibutil >= 1.0.51, dummy=yes,
 			AC_MSG_ERROR(libglibutil >= 1.0.51 is required))
 CFLAGS="$CFLAGS $GLIBUTIL_CFLAGS"

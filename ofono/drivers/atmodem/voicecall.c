@@ -768,10 +768,17 @@ static void clip_notify(GAtResult *result, gpointer user_data)
 	if (!g_at_result_iter_next_number(&iter, &type))
 		return;
 
-	if (strlen(num) > 0)
+	if (strlen(num) > 0) {
 		validity = CLIP_VALIDITY_VALID;
-	else
+	} else {
+		/* When a Unisoc modem receives a VoLTE call, the CLIP
+		 * indication is always empty. Fall back to CLCC in this case.
+		 */
+		if (vd->vendor == OFONO_VENDOR_SPRD)
+			return;
+
 		validity = CLIP_VALIDITY_NOT_AVAILABLE;
+	}
 
 	/* Skip subaddr, satype and alpha */
 	g_at_result_iter_skip_next(&iter);

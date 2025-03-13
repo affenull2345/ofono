@@ -583,15 +583,14 @@ static void at_cgdcont_test_cb(gboolean ok, GAtResult *result,
 		if (g_at_result_iter_open_list(&iter))
 			in_list = TRUE;
 
-		if (!g_at_result_iter_next_string(&iter, &pdp_type))
-			continue;
+		do {
+			if (!g_at_result_iter_next_string(&iter, &pdp_type))
+				break;
 
-		if (in_list && !g_at_result_iter_close_list(&iter))
-			continue;
-
-		/* We look for IP PDPs */
-		if (g_str_equal(pdp_type, "IP"))
-			found = TRUE;
+			/* We look for IP PDPs */
+			if (g_str_equal(pdp_type, "IP"))
+				found = TRUE;
+		} while (in_list && !g_at_result_iter_close_list(&iter));
 	}
 
 	if (found == FALSE)

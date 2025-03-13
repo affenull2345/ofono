@@ -1115,6 +1115,10 @@ static void at_cpms_query_cb(gboolean ok, GAtResult *result,
 		} else
 			mem_max = 3;
 
+		if (data->vendor == OFONO_VENDOR_SPRD &&
+				!g_at_result_iter_open_list(&iter))
+			goto out;
+
 		for (mem = 0; mem < mem_max; mem++) {
 			if (!g_at_result_iter_open_list(&iter))
 				goto out;
@@ -1131,6 +1135,10 @@ static void at_cpms_query_cb(gboolean ok, GAtResult *result,
 			if (!g_at_result_iter_close_list(&iter))
 				goto out;
 		}
+
+		if (data->vendor == OFONO_VENDOR_SPRD &&
+				!g_at_result_iter_close_list(&iter))
+			goto out;
 
 		if (data->vendor != OFONO_VENDOR_WAVECOM_Q2XXX &&
 				!sm_supported[2] && !me_supported[2]

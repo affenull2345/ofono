@@ -34,8 +34,14 @@
 #include "gatresult.h"
 
 #include "atmodem.h"
+#include "vendor.h"
 
 static const char *gcap_prefix[] = { "+GCAP:", NULL };
+
+struct devinfo_data {
+	GAtChat *chat;
+	unsigned int vendor;
+};
 
 static void attr_cb(gboolean ok, GAtResult *result, gpointer user_data)
 {
@@ -64,11 +70,11 @@ static void at_query_manufacturer(struct ofono_devinfo *info,
 				ofono_devinfo_query_cb_t cb, void *data)
 {
 	struct cb_data *cbd = cb_data_new(cb, data);
-	GAtChat *chat = ofono_devinfo_get_data(info);
+	struct devinfo_data *dd = ofono_devinfo_get_data(info);
 
 	cbd->user = "+CGMI:";
 
-	if (g_at_chat_send(chat, "AT+CGMI", NULL, attr_cb, cbd, g_free) > 0)
+	if (g_at_chat_send(dd->chat, "AT+CGMI", NULL, attr_cb, cbd, g_free) > 0)
 		return;
 
 	g_free(cbd);
@@ -80,11 +86,11 @@ static void at_query_model(struct ofono_devinfo *info,
 				ofono_devinfo_query_cb_t cb, void *data)
 {
 	struct cb_data *cbd = cb_data_new(cb, data);
-	GAtChat *chat = ofono_devinfo_get_data(info);
+	struct devinfo_data *dd = ofono_devinfo_get_data(info);
 
 	cbd->user = "+CGMM:";
 
-	if (g_at_chat_send(chat, "AT+CGMM", NULL, attr_cb, cbd, g_free) > 0)
+	if (g_at_chat_send(dd->chat, "AT+CGMM", NULL, attr_cb, cbd, g_free) > 0)
 		return;
 
 	g_free(cbd);
@@ -96,11 +102,11 @@ static void at_query_revision(struct ofono_devinfo *info,
 				ofono_devinfo_query_cb_t cb, void *data)
 {
 	struct cb_data *cbd = cb_data_new(cb, data);
-	GAtChat *chat = ofono_devinfo_get_data(info);
+	struct devinfo_data *dd = ofono_devinfo_get_data(info);
 
 	cbd->user = "+CGMR:";
 
-	if (g_at_chat_send(chat, "AT+CGMR", NULL, attr_cb, cbd, g_free) > 0)
+	if (g_at_chat_send(dd->chat, "AT+CGMR", NULL, attr_cb, cbd, g_free) > 0)
 		return;
 
 	g_free(cbd);
@@ -112,12 +118,31 @@ static void at_query_serial(struct ofono_devinfo *info,
 				ofono_devinfo_query_cb_t cb, void *data)
 {
 	struct cb_data *cbd = cb_data_new(cb, data);
-	GAtChat *chat = ofono_devinfo_get_data(info);
+	struct devinfo_data *dd = ofono_devinfo_get_data(info);
 
 	cbd->user = "+CGSN:";
 
-	if (g_at_chat_send(chat, "AT+CGSN", NULL, attr_cb, cbd, g_free) > 0)
+	if (g_at_chat_send(dd->chat, "AT+CGSN", NULL, attr_cb, cbd, g_free) > 0)
 		return;
+
+	g_free(cbd);
+
+	CALLBACK_WITH_FAILURE(cb, NULL, data);
+}
+
+static void at_query_svn(struct ofono_devinfo *info,
+				ofono_devinfo_query_cb_t cb, void *data)
+{
+	struct cb_data *cbd = cb_data_new(cb, data);
+	struct devinfo_data *dd = ofono_devinfo_get_data(info);
+
+	if (dd->vendor == OFONO_VENDOR_SPRD) {
+		cbd->user = "+SGMR:";
+
+		if (g_at_chat_send(dd->chat, "AT+SGMR=0,0,2", NULL, attr_cb,
+					cbd, g_free) > 0)
+			return;
+	}
 
 	g_free(cbd);
 
@@ -135,8 +160,13 @@ static int at_devinfo_probe(struct ofono_devinfo *info, unsigned int vendor,
 				void *data)
 {
 	GAtChat *chat = g_at_chat_clone(data);
+	struct devinfo_data *dd;
 
-	ofono_devinfo_set_data(info, chat);
+	dd = g_new0(struct devinfo_data, 1);
+	dd->chat = chat;
+	dd->vendor = vendor;
+
+	ofono_devinfo_set_data(info, dd);
 
 	g_at_chat_send(chat, "AT+GCAP", gcap_prefix,
 				capability_cb, info, NULL);
@@ -146,11 +176,12 @@ static int at_devinfo_probe(struct ofono_devinfo *info, unsigned int vendor,
 
 static void at_devinfo_remove(struct ofono_devinfo *info)
 {
-	GAtChat *chat = ofono_devinfo_get_data(info);
+	struct devinfo_data *dd = ofono_devinfo_get_data(info);
 
 	ofono_devinfo_set_data(info, NULL);
 
-	g_at_chat_unref(chat);
+	g_at_chat_unref(dd->chat);
+	g_free(dd);
 }
 
 static const struct ofono_devinfo_driver driver = {
@@ -161,6 +192,7 @@ static const struct ofono_devinfo_driver driver = {
 	.query_model		= at_query_model,
 	.query_revision		= at_query_revision,
 	.query_serial		= at_query_serial,
+	.query_svn		= at_query_svn,
 };
 
 void at_devinfo_init(void)

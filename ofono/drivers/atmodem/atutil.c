@@ -24,6 +24,7 @@
 #include <config.h>
 #endif
 
+#define _GNU_SOURCE
 #include <glib.h>
 #include <gatchat.h>
 #include <string.h>
@@ -166,8 +167,24 @@ GSList *at_util_parse_clcc(GAtResult *result, unsigned int *ret_mpty_ids)
 		call->direction = dir;
 		call->status = status;
 		call->type = type;
-		strncpy(call->phone_number.number, str,
-				OFONO_MAX_PHONE_NUMBER_LENGTH);
+
+		/* Some LTE modems (e.g. Unisoc modems) return a SIP URI
+		 * instead of a phone number when VoLTE is active. Extract
+		 * the number from the SIP URI. */
+		if (g_str_has_prefix(str, "sip:")) {
+			size_t len;
+
+			str += 4;
+			len = strchrnul(str, '@') - str;
+			if (len > OFONO_MAX_PHONE_NUMBER_LENGTH)
+				len = OFONO_MAX_PHONE_NUMBER_LENGTH;
+			memcpy(call->phone_number.number, str, len);
+			call->phone_number.number[len] = '\0';
+		} else {
+			strncpy(call->phone_number.number, str,
+					OFONO_MAX_PHONE_NUMBER_LENGTH);
+		}
+
 		call->phone_number.type = number_type;
 
 		if (strlen(call->phone_number.number) > 0)

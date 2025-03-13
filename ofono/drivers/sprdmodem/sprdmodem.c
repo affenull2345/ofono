@@ -19,34 +19,33 @@
  *
  */
 
-enum ofono_vendor {
-	OFONO_VENDOR_GENERIC = 0,
-	OFONO_VENDOR_CALYPSO,
-	OFONO_VENDOR_IFX,
-	OFONO_VENDOR_STE,
-	OFONO_VENDOR_MBM,
-	OFONO_VENDOR_GOBI,
-	OFONO_VENDOR_QUALCOMM_MSM,
-	OFONO_VENDOR_OPTION_HSO,
-	OFONO_VENDOR_ZTE,
-	OFONO_VENDOR_HUAWEI,
-	OFONO_VENDOR_SIERRA,
-	OFONO_VENDOR_NOVATEL,
-	OFONO_VENDOR_WAVECOM,
-	OFONO_VENDOR_NOKIA,
-	OFONO_VENDOR_PHONESIM,
-	OFONO_VENDOR_TELIT,
-	OFONO_VENDOR_SPEEDUP,
-	OFONO_VENDOR_SAMSUNG,
-	OFONO_VENDOR_SIMCOM,
-	OFONO_VENDOR_SIMCOM_SIM900,
-	OFONO_VENDOR_ICERA,
-	OFONO_VENDOR_WAVECOM_Q2XXX,
-	OFONO_VENDOR_ALCATEL,
-	OFONO_VENDOR_QUECTEL,
-	OFONO_VENDOR_QUECTEL_M95,
-	OFONO_VENDOR_UBLOX,
-	OFONO_VENDOR_XMM,
-	OFONO_VENDOR_GEMALTO,
-	OFONO_VENDOR_SPRD,
-};
+#ifdef HAVE_CONFIG_H
+#include <config.h>
+#endif
+
+#include <glib.h>
+#include <gatchat.h>
+
+#define OFONO_API_SUBJECT_TO_CHANGE
+#include <ofono/plugin.h>
+#include <ofono/types.h>
+
+#include "sprdmodem.h"
+
+static int sprdmodem_init(void)
+{
+	sprd_radio_settings_init();
+	sprd_gprs_context_init();
+
+	return 0;
+}
+
+static void sprdmodem_exit(void)
+{
+	sprd_gprs_context_exit();
+	sprd_radio_settings_exit();
+}
+
+OFONO_PLUGIN_DEFINE(sprdmodem, "Unisoc/Spreadtrum modem driver", VERSION,
+			OFONO_PLUGIN_PRIORITY_DEFAULT,
+			sprdmodem_init, sprdmodem_exit)

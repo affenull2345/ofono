@@ -45,6 +45,7 @@ static const char *none_prefix[] = { NULL };
 static const char *creg_prefix[] = { "+CREG:", NULL };
 static const char *cops_prefix[] = { "+COPS:", NULL };
 static const char *csq_prefix[] = { "+CSQ:", NULL };
+static const char *cesq_prefix[] = { "+CESQ:", NULL };
 static const char *cind_prefix[] = { "+CIND:", NULL };
 static const char *cmer_prefix[] = { "+CMER:", NULL };
 static const char *smoni_prefix[] = { "^SMONI:", NULL };
@@ -912,6 +913,46 @@ static void gemalto_ciev_notify(GAtResult *result, gpointer user_data)
 	ofono_netreg_strength_notify(netreg, strength);
 }
 
+static int cesq_get_strength(GAtResultIter *iter)
+{
+	int rxlev, ber, rscp, ecno, rsrq, rsrp;
+
+	if (!g_at_result_iter_next_number(iter, &rxlev))
+		return -1;
+	if (!g_at_result_iter_next_number(iter, &ber))
+		return -1;
+	if (!g_at_result_iter_next_number(iter, &rscp))
+		return -1;
+	if (!g_at_result_iter_next_number(iter, &ecno))
+		return -1;
+	if (!g_at_result_iter_next_number(iter, &rsrq))
+		return -1;
+	if (!g_at_result_iter_next_number(iter, &rsrp))
+		return -1;
+
+	if (rsrp != 255)
+		return (rsrp * 100) / 97;
+	else if (rscp != 255)
+		return (rscp * 100) / 96;
+	else if (rxlev != 99)
+		return (rxlev * 100) / 63;
+	else
+		return -1;
+}
+
+static void cesq_notify(GAtResult *result, gpointer user_data)
+{
+	struct ofono_netreg *netreg = user_data;
+	GAtResultIter iter;
+
+	g_at_result_iter_init(&iter, result);
+
+	if (!g_at_result_iter_next(&iter, "+CESQ:"))
+		return;
+
+	ofono_netreg_strength_notify(netreg, cesq_get_strength(&iter));
+}
+
 static void ctzv_notify(GAtResult *result, gpointer user_data)
 {
 	struct ofono_netreg *netreg = user_data;
@@ -1042,6 +1083,41 @@ static void ifx_ctzdst_notify(GAtResult *result, gpointer user_data)
 		g_source_remove(nd->nitz_timeout);
 		nd->nitz_timeout = 0;
 	}
+
+	ofono_netreg_time_notify(netreg, &nd->time);
+}
+
+static void sprd_ctzv_notify(GAtResult *result, gpointer user_data)
+{
+	struct ofono_netreg *netreg = user_data;
+	struct netreg_data *nd = ofono_netreg_get_data(netreg);
+	int year, mon, mday, hour, min, sec, dst;
+	char tz[4];
+	const char *time;
+	GAtResultIter iter;
+
+	g_at_result_iter_init(&iter, result);
+
+	if (!g_at_result_iter_next(&iter, "+CTZV:"))
+		return;
+
+	if (!g_at_result_iter_next_string(&iter, &time))
+		return;
+
+	DBG("time %s", time);
+
+	if (sscanf(time, "%u/%u/%u,%u:%u:%u%s,%u", &year, &mon, &mday,
+					&hour, &min, &sec, tz, &dst) != 8)
+		return;
+
+	nd->time.sec = sec;
+	nd->time.min = min;
+	nd->time.hour = hour;
+	nd->time.mday = mday;
+	nd->time.mon = mon;
+	nd->time.year = 2000 + year;
+	nd->time.utcoff = atoi(tz) * 15 * 60;
+	nd->time.dst = dst;
 
 	ofono_netreg_time_notify(netreg, &nd->time);
 }
@@ -1228,6 +1304,33 @@ static void csq_cb(gboolean ok, GAtResult *result, gpointer user_data)
 	cb(&error, strength, cbd->data);
 }
 
+static void cesq_cb(gboolean ok, GAtResult *result, gpointer user_data)
+{
+	struct cb_data *cbd = user_data;
+	ofono_netreg_strength_cb_t cb = cbd->cb;
+	GAtResultIter iter;
+	struct ofono_error error;
+
+	decode_at_error(&error, g_at_result_final_response(result));
+
+	if (!ok) {
+		cb(&error, -1, cbd->data);
+		return;
+	}
+
+	g_at_result_iter_init(&iter, result);
+
+	if (!g_at_result_iter_next(&iter, "+CESQ:"))
+		goto error;
+
+	cb(&error, cesq_get_strength(&iter), cbd->data);
+
+	return;
+
+error:
+	CALLBACK_WITH_FAILURE(cb, -1, cbd->data);
+}
+
 static void at_signal_strength(struct ofono_netreg *netreg,
 				ofono_netreg_strength_cb_t cb, void *data)
 {
@@ -1243,6 +1346,10 @@ static void at_signal_strength(struct ofono_netreg *netreg,
 	if (nd->signal_index > 0) {
 		if (g_at_chat_send(nd->chat, "AT+CIND?", cind_prefix,
 					cind_cb, cbd, g_free) > 0)
+			return;
+	} else if (nd->vendor == OFONO_VENDOR_SPRD) {
+		if (g_at_chat_send(nd->chat, "AT+CESQ", cesq_prefix,
+					cesq_cb, cbd, g_free) > 0)
 			return;
 	} else {
 		if (g_at_chat_send(nd->chat, "AT+CSQ", csq_prefix,
@@ -2058,6 +2165,12 @@ static void at_creg_set_cb(gboolean ok, GAtResult *result, gpointer user_data)
 	case OFONO_VENDOR_NOKIA:
 	case OFONO_VENDOR_SAMSUNG:
 		/* Signal strength reporting via CIND is not supported */
+		break;
+	case OFONO_VENDOR_SPRD:
+		g_at_chat_register(nd->chat, "+CESQ:", cesq_notify,
+						FALSE, netreg, NULL);
+		g_at_chat_register(nd->chat, "+CTZV:", sprd_ctzv_notify,
+						FALSE, netreg, NULL);
 		break;
 	default:
 		g_at_chat_send(nd->chat, "AT+CIND=?", cind_prefix,

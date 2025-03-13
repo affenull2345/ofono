@@ -423,6 +423,15 @@ builtin_sources += drivers/atmodem/atutil.h \
 			drivers/xmm7modem/ims.c \
 			drivers/xmm7modem/netmon.c
 
+if SPRDMODEM
+builtin_modules += sprdmodem
+builtin_sources += drivers/atmodem/atutil.h \
+			drivers/sprdmodem/sprdmodem.h \
+			drivers/sprdmodem/sprdmodem.c \
+			drivers/sprdmodem/gprs-context.c \
+			drivers/sprdmodem/radio-settings.c
+endif
+
 if PHONESIM
 builtin_modules += phonesim
 builtin_sources += plugins/phonesim.c
@@ -531,6 +540,11 @@ builtin_sources += plugins/ublox.c
 
 builtin_modules += xmm7xxx
 builtin_sources += plugins/xmm7xxx.c
+endif
+
+if SPRDMODEM
+builtin_modules += sprd
+builtin_sources += plugins/sprd.c
 endif
 
 builtin_modules += connman
